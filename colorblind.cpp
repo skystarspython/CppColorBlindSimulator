@@ -1,163 +1,134 @@
 #include <iostream>
 #include <vector>
-#include <map>
-#include <string>
 #include <cmath>
-#include <algorithm>
+#include <map>
 
-using namespace std;
-
-vector<double> powGammaLookup(256);
-
-struct ColorMatrix {
-    vector<double> R;
-    vector<double> G;
-    vector<double> B;
+struct RGB {
+    double r;
+    double g;
+    double b;
 };
 
-struct RBlind {
-    double cpu, cpv, am, ayi;
+struct BlindType {
+    double cpu;
+    double cpv;
+    double am;
+    double ayi;
 };
 
-map<string, ColorMatrix> colorMatrixMatrixes = {
-    {"Normal", {{100, 0, 0}, {0, 100, 0}, {0, 0, 100}}},
-    {"Protanopia", {{56.667, 43.333, 0}, {55.833, 44.167, 0}, {0, 24.167, 75.833}}},
-    {"Protanomaly", {{81.667, 18.333, 0}, {33.333, 66.667, 0}, {0, 12.5, 87.5}}},
-    {"Deuteranopia", {{62.5, 37.5, 0}, {70, 30, 0}, {0, 30, 70}}},
-    {"Deuteranomaly", {{80, 20, 0}, {25.833, 74.167, 0}, {0, 14.167, 85.833}}},
-    {"Tritanopia", {{95, 5, 0}, {0, 43.333, 56.667}, {0, 47.5, 52.5}}},
-    {"Tritanomaly", {{96.667, 3.333, 0}, {0, 73.333, 26.667}, {0, 18.333, 81.667}}},
-    {"Achromatopsia", {{29.9, 58.7, 11.4}, {29.9, 58.7, 11.4}, {29.9, 58.7, 11.4}}},
-    {"Achromatomaly", {{61.8, 32, 6.2}, {16.3, 77.5, 6.2}, {16.3, 32, 51.6}}},
-};
-
-map<string, RBlind> rBlind = {
+std::map<std::string, BlindType> rBlind = {
     {"protan", {0.735, 0.265, 1.273463, -0.073894}},
     {"deutan", {1.14, -0.14, 0.968437, 0.003331}},
-    {"tritan", {0.171, -0.003, 0.062921, 0.292119}},
+    {"tritan", {0.171, -0.003, 0.062921, 0.292119}}
 };
 
-void initPowGammaLookup() {
-    for (int i = 0; i < 256; i++) {
-        powGammaLookup[i] = pow(i / 255.0, 2.2);
+std::vector<double> powGammaLookup(256);
+
+void initializePowGammaLookup() {
+    for (int i = 0; i < 256; ++i) {
+        powGammaLookup[i] = std::pow(i / 255.0, 2.2);
     }
 }
 
-vector<double> matrixFunction(const ColorMatrix& a, const vector<double>& b) {
-    vector<double> result(3);
-    result[0] = (b[0] * a.R[0] + b[1] * a.R[1] + b[2] * a.R[2]) / 100;
-    result[1] = (b[0] * a.G[0] + b[1] * a.G[1] + b[2] * a.G[2]) / 100;
-    result[2] = (b[0] * a.B[0] + b[1] * a.B[1] + b[2] * a.B[2]) / 100;
-    return result;
+double inversePow(double v) {
+    return (255 * (v <= 0 ? 0 : v >= 1 ? 1 : std::pow(v, 1 / 2.2)));
 }
 
-double inversePow(double a) {
-    return 255 * (a <= 0 ? 0 : a >= 1 ? 1 : pow(a, 1 / 2.2));
-}
+RGB blindMK(RGB rgb, const std::string& t) {
+    double gamma = 2.2;
+    double wx = 0.312713;
+    double wy = 0.329016;
+    double wz = 0.358271;
 
-vector<double> blindMK(const vector<double>& a, const string& str) {
-    const RBlind& rb = rBlind.at(str);
-    double r = a[0], g = a[1], b = a[2];
-    double j = powGammaLookup[r], k = powGammaLookup[g], l = powGammaLookup[b];
-    double m = 0.430574 * j + 0.34155 * k + 0.178325 * l;
-    double n = 0.222015 * j + 0.706655 * k + 0.07133 * l;
-    double o = 0.020183 * j + 0.129553 * k + 0.93918 * l;
-    double p = m + n + o;
-    double q = 0, s = 0;
-    if (p != 0) {
-        q = m / p;
-        s = n / p;
-    }
-    double u, t = 0;
-    u = q < rb.cpu ? (rb.cpv - s) / (rb.cpu - q) : (s - rb.cpv) / (q - rb.cpu);
-    double v = s - q * u;
-    double x = (rb.ayi - v) / (u - rb.am);
-    double y = u * x + v;
-    double z = x * n / y;
-    double A = n;
-    double B = (1 - (x + y)) * n / y;
-    double C = 3.063218 * z - 1.393325 * A - 0.475802 * B;
-    double D = -0.969243 * z + 1.875966 * A + 0.041555 * B;
-    double E = 0.067871 * z - 0.228834 * A + 1.069251 * B;
-    double F = 0, G = 0, H = 0;
-    F = s - z;
-    G = t - B;
-    double dr = 3.063218 * F - 1.393325 * t - 0.475802 * G;
-    double dg = -0.969243 * F + 1.875966 * t + 0.041555 * G;
-    double db = 0.067871 * F - 0.228834 * t + 1.069251 * G;
-    double I = dr ? ((C < 0 ? 0 : 1) - C) / dr : 0;
-    double J = dg ? ((D < 0 ? 0 : 1) - D) / dg : 0;
-    double K = db ? ((E < 0 ? 0 : 1) - E) / db : 0;
-    double L = max(max(I > 1 || I < 0 ? 0 : I, J > 1 || J < 0 ? 0 : J), K > 1 || K < 0 ? 0 : K);
-    C += L * dr;
-    D += L * dg;
-    E += L * db;
-    return { inversePow(C), inversePow(D), inversePow(E) };
-}
+    double cr = powGammaLookup[static_cast<int>(rgb.r)];
+    double cg = powGammaLookup[static_cast<int>(rgb.g)];
+    double cb = powGammaLookup[static_cast<int>(rgb.b)];
 
-vector<double> anomylize(const vector<double>& a, const vector<double>& b) {
-    double c = 1.75;
-    double d = 1 * c + 1;
-    vector<double> result(3);
-    result[0] = (c * b[0] + 1 * a[0]) / d;
-    result[1] = (c * b[1] + 1 * a[1]) / d;
-    result[2] = (c * b[2] + 1 * a[2]) / d;
-    return result;
-}
+    double cx = (0.430574 * cr + 0.341550 * cg + 0.178325 * cb);
+    double cy = (0.222015 * cr + 0.706655 * cg + 0.071330 * cb);
+    double cz = (0.020183 * cr + 0.129553 * cg + 0.939180 * cb);
 
-vector<double> monochrome(const vector<double>& a) {
-    double b = round(0.299 * a[0] + 0.587 * a[1] + 0.114 * a[2]);
-    return { b, b, b };
-}
+    double sum_xyz = cx + cy + cz;
+    double cu = 0;
+    double cv = 0;
 
-vector<double> applyColorBlindFunction(const vector<double>& a, const string& colorBlindType) {
-    if (colorBlindType == "Normal") {
-        return a;
+    if (sum_xyz != 0) {
+        cu = cx / sum_xyz;
+        cv = cy / sum_xyz;
     }
-    else if (colorBlindType == "Protanopia") {
-        return blindMK(a, "protan");
-    }
-    else if (colorBlindType == "Protanomaly") {
-        return anomylize(a, blindMK(a, "protan"));
-    }
-    else if (colorBlindType == "Deuteranopia") {
-        return blindMK(a, "deutan");
-    }
-    else if (colorBlindType == "Deuteranomaly") {
-        return anomylize(a, blindMK(a, "deutan"));
-    }
-    else if (colorBlindType == "Tritanopia") {
-        return blindMK(a, "tritan");
-    }
-    else if (colorBlindType == "Tritanomaly") {
-        return anomylize(a, blindMK(a, "tritan"));
-    }
-    else if (colorBlindType == "Achromatopsia") {
-        return monochrome(a);
-    }
-    else if (colorBlindType == "Achromatomaly") {
-        return anomylize(a, monochrome(a));
+
+    double nx = wx * cy / wy;
+    double nz = wz * cy / wy;
+    double clm;
+    double dy = 0;
+
+    if (cu < rBlind[t].cpu) {
+        clm = (rBlind[t].cpv - cv) / (rBlind[t].cpu - cu);
     }
     else {
-        throw invalid_argument("Unknown color blind type.");
+        clm = (cv - rBlind[t].cpv) / (cu - rBlind[t].cpu);
     }
+
+    double clyi = cv - cu * clm;
+    double du = (rBlind[t].ayi - clyi) / (clm - rBlind[t].am);
+    double dv = (clm * du) + clyi;
+
+    double sx = du * cy / dv;
+    double sy = cy;
+    double sz = (1 - (du + dv)) * cy / dv;
+
+    double sr = (3.063218 * sx - 1.393325 * sy - 0.475802 * sz);
+    double sg = (-0.969243 * sx + 1.875966 * sy + 0.041555 * sz);
+    double sb = (0.067871 * sx - 0.228834 * sy + 1.069251 * sz);
+
+    double dx = nx - sx;
+    double dz = nz - sz;
+
+    double dr = (3.063218 * dx - 1.393325 * dy - 0.475802 * dz);
+    double dg = (-0.969243 * dx + 1.875966 * dy + 0.041555 * dz);
+    double db = (0.067871 * dx - 0.228834 * dy + 1.069251 * dz);
+
+    double adjr = dr ? ((sr < 0 ? 0 : 1) - sr) / dr : 0;
+    double adjg = dg ? ((sg < 0 ? 0 : 1) - sg) / dg : 0;
+    double adjb = db ? ((sb < 0 ? 0 : 1) - sb) / db : 0;
+
+    double adjust = std::max(
+        ((adjr > 1 || adjr < 0) ? 0 : adjr),
+        std::max(((adjg > 1 || adjg < 0) ? 0 : adjg),
+        ((adjb > 1 || adjb < 0) ? 0 : adjb))
+    );
+
+    sr = sr + (adjust * dr);
+    sg = sg + (adjust * dg);
+    sb = sb + (adjust * db);
+
+    return { inversePow(sr), inversePow(sg), inversePow(sb) };
 }
 
-vector<int> colorBlindConvert(const vector<int>& rgb, const string& colorBlindType) {
-    vector<double> input(rgb.begin(), rgb.end());
-    vector<double> output = applyColorBlindFunction(input, colorBlindType);
-    vector<int> result(output.size());
-    transform(output.begin(), output.end(), result.begin(), [](double d) { return static_cast<int>(round(d)); });
-    return result;
+RGB anomylize(RGB a, RGB b) {
+    double v = 1.75, d = v * 1 + 1;
+
+    return {
+        (v * b.r + a.r * 1) / d,
+        (v * b.g + a.g * 1) / d,
+        (v * b.b + a.b * 1) / d
+    };
+}
+
+RGB monochrome(RGB r) {
+    double z = std::round(r.r * 0.299 + r.g * 0.587 + r.b * 0.114);
+    return { z, z, z };
 }
 
 int main() {
-    initPowGammaLookup();
-    vector<int> inputRGB = { 255, 0, 0 };
-    string colorBlindType = "Protanopia";
-    vector<int> outputRGB = colorBlindConvert(inputRGB, colorBlindType);
-    cout << "Original RGB: (" << inputRGB[0] << ", " << inputRGB[1] << ", " << inputRGB[2] << ")\n";
-    cout << "Color blind type: " << colorBlindType << "\n";
-    cout << "Output RGB: (" << outputRGB[0] << ", " << outputRGB[1] << ", " << outputRGB[2] << ")\n";
+    initializePowGammaLookup();
+
+    RGB input_rgb = { 0, 128, 0 }; // 输入RGB颜色
+    std::string color_blindness_type = "protan"; // 色盲类型（如：protan，deutan，tritan）
+
+    RGB output_rgb = blindMK(input_rgb, color_blindness_type);
+
+    std::cout << "Output RGB: (" << output_rgb.r << ", " << output_rgb.g << ", " << output_rgb.b << ")" << std::endl;
+
     return 0;
 }
