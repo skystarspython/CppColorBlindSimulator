@@ -3,132 +3,98 @@
 #include <cmath>
 #include <map>
 
-struct RGB {
-    double r;
-    double g;
-    double b;
+double linearRGB_from_sRGB(int v) {
+    double fv = v / 255.0;
+    if (fv < 0.04045) return fv / 12.92;
+    return std::pow((fv + 0.055) / 1.055, 2.4);
+}
+
+int sRGB_from_linearRGB(double v) {
+    if (v <= 0.) return 0;
+    if (v >= 1.) return 255;
+    if (v < 0.0031308) return 0.5 + (v * 12.92 * 255);
+    return 0 + 255 * (std::pow(v, 1.0 / 2.4) * 1.055 - 0.055);
+}
+
+struct BrettelParams {
+    std::vector<double> rgbCvdFromRgb_1;
+    std::vector<double> rgbCvdFromRgb_2;
+    std::vector<double> separationPlaneNormal;
 };
 
-struct BlindType {
-    double cpu;
-    double cpv;
-    double am;
-    double ayi;
+std::map<std::string, BrettelParams> brettel_params = {
+    {"protan", {
+                    {0.14510, 1.20165, -0.34675,
+                     0.10447, 0.85316, 0.04237,
+                     0.00429, -0.00603, 1.00174},
+                    {0.14115, 1.16782, -0.30897,
+                     0.10495, 0.85730, 0.03776,
+                     0.00431, -0.00586, 1.00155},
+                    {0.00048, 0.00416, -0.00464}
+                }},
+    {"deutan", {
+                    {0.36198, 0.86755, -0.22953,
+                     0.26099, 0.64512, 0.09389,
+                     -0.01975, 0.02686, 0.99289},
+                    {0.37009, 0.88540, -0.25549,
+                     0.25767, 0.63782, 0.10451,
+                     -0.01950, 0.02741, 0.99209},
+                    {-0.00293, -0.00645, 0.00938}
+                }},
+    {"tritan", {
+                    {1.01354, 0.14268, -0.15622,
+                     -0.01181, 0.87561, 0.13619,
+                     0.07707, 0.81208, 0.11085},
+                    {0.93337, 0.19999, -0.13336,
+                     0.05809, 0.82565, 0.11626,
+                     -0.37923, 1.13825, 0.24098},
+                    {0.03960, -0.02831, -0.01129}
+                }}
 };
 
-std::map<std::string, BlindType> rBlind = {
-    {"protan", {0.735, 0.265, 1.273463, -0.073894}},
-    {"deutan", {1.14, -0.14, 0.968437, 0.003331}},
-    {"tritan", {0.171, -0.003, 0.062921, 0.292119}}
-};
+std::vector<int> brettel(const std::vector<int>& srgb, const std::string& t, double severity) {
+    std::vector<double> rgb(3);
+    rgb[0] = linearRGB_from_sRGB(srgb[0]);
+    rgb[1] = linearRGB_from_sRGB(srgb[1]);
+    rgb[2] = linearRGB_from_sRGB(srgb[2]);
 
-std::vector<double> powGammaLookup(256);
+    BrettelParams params = brettel_params[t];
+    std::vector<double> separationPlaneNormal = params.separationPlaneNormal;
+    std::vector<double> rgbCvdFromRgb_1 = params.rgbCvdFromRgb_1;
+    std::vector<double> rgbCvdFromRgb_2 = params.rgbCvdFromRgb_2;
 
-void initializePowGammaLookup() {
-    for (int i = 0; i < 256; ++i) {
-        powGammaLookup[i] = std::pow(i / 255.0, 2.2);
-    }
+    double dotWithSepPlane = rgb[0] * separationPlaneNormal[0] + rgb[1] * separationPlaneNormal[1] + rgb[2] * separationPlaneNormal[2];
+    std::vector<double> rgbCvdFromRgb = (dotWithSepPlane >= 0 ? rgbCvdFromRgb_1 : rgbCvdFromRgb_2);
+
+    std::vector<double> rgb_cvd(3);
+    rgb_cvd[0] = rgbCvdFromRgb[0] * rgb[0] + rgbCvdFromRgb[1] * rgb[1] + rgbCvdFromRgb[2] * rgb[2];
+    rgb_cvd[1] = rgbCvdFromRgb[3] * rgb[0] + rgbCvdFromRgb[4] * rgb[1] + rgbCvdFromRgb[5] * rgb[2];
+    rgb_cvd[2] = rgbCvdFromRgb[6] * rgb[0] + rgbCvdFromRgb[7] * rgb[1] + rgbCvdFromRgb[8] * rgb[2];
+
+    rgb_cvd[0] = rgb_cvd[0] * severity + rgb[0] * (1.0 - severity);
+    rgb_cvd[1] = rgb_cvd[1] * severity + rgb[1] * (1.0 - severity);
+    rgb_cvd[2] = rgb_cvd[2] * severity + rgb[2] * (1.0 - severity);
+
+    return { sRGB_from_linearRGB(rgb_cvd[0]), sRGB_from_linearRGB(rgb_cvd[1]), sRGB_from_linearRGB(rgb_cvd[2]) };
 }
 
-double inversePow(double v) {
-    return (255 * (v <= 0 ? 0 : v >= 1 ? 1 : std::pow(v, 1 / 2.2)));
-}
-
-RGB blindMK(RGB rgb, const std::string& t) {
-    double gamma = 2.2;
-    double wx = 0.312713;
-    double wy = 0.329016;
-    double wz = 0.358271;
-
-    double cr = powGammaLookup[static_cast<int>(rgb.r)];
-    double cg = powGammaLookup[static_cast<int>(rgb.g)];
-    double cb = powGammaLookup[static_cast<int>(rgb.b)];
-
-    double cx = (0.430574 * cr + 0.341550 * cg + 0.178325 * cb);
-    double cy = (0.222015 * cr + 0.706655 * cg + 0.071330 * cb);
-    double cz = (0.020183 * cr + 0.129553 * cg + 0.939180 * cb);
-
-    double sum_xyz = cx + cy + cz;
-    double cu = 0;
-    double cv = 0;
-
-    if (sum_xyz != 0) {
-        cu = cx / sum_xyz;
-        cv = cy / sum_xyz;
-    }
-
-    double nx = wx * cy / wy;
-    double nz = wz * cy / wy;
-    double clm;
-    double dy = 0;
-
-    if (cu < rBlind[t].cpu) {
-        clm = (rBlind[t].cpv - cv) / (rBlind[t].cpu - cu);
-    }
-    else {
-        clm = (cv - rBlind[t].cpv) / (cu - rBlind[t].cpu);
-    }
-
-    double clyi = cv - cu * clm;
-    double du = (rBlind[t].ayi - clyi) / (clm - rBlind[t].am);
-    double dv = (clm * du) + clyi;
-
-    double sx = du * cy / dv;
-    double sy = cy;
-    double sz = (1 - (du + dv)) * cy / dv;
-
-    double sr = (3.063218 * sx - 1.393325 * sy - 0.475802 * sz);
-    double sg = (-0.969243 * sx + 1.875966 * sy + 0.041555 * sz);
-    double sb = (0.067871 * sx - 0.228834 * sy + 1.069251 * sz);
-
-    double dx = nx - sx;
-    double dz = nz - sz;
-
-    double dr = (3.063218 * dx - 1.393325 * dy - 0.475802 * dz);
-    double dg = (-0.969243 * dx + 1.875966 * dy + 0.041555 * dz);
-    double db = (0.067871 * dx - 0.228834 * dy + 1.069251 * dz);
-
-    double adjr = dr ? ((sr < 0 ? 0 : 1) - sr) / dr : 0;
-    double adjg = dg ? ((sg < 0 ? 0 : 1) - sg) / dg : 0;
-    double adjb = db ? ((sb < 0 ? 0 : 1) - sb) / db : 0;
-
-    double adjust = std::max(
-        ((adjr > 1 || adjr < 0) ? 0 : adjr),
-        std::max(((adjg > 1 || adjg < 0) ? 0 : adjg),
-        ((adjb > 1 || adjb < 0) ? 0 : adjb))
-    );
-
-    sr = sr + (adjust * dr);
-    sg = sg + (adjust * dg);
-    sb = sb + (adjust * db);
-
-    return { inversePow(sr), inversePow(sg), inversePow(sb) };
-}
-
-RGB anomylize(RGB a, RGB b) {
-    double v = 1.75, d = v * 1 + 1;
-
-    return {
-        (v * b.r + a.r * 1) / d,
-        (v * b.g + a.g * 1) / d,
-        (v * b.b + a.b * 1) / d
-    };
-}
-
-RGB monochrome(RGB r) {
-    double z = std::round(r.r * 0.299 + r.g * 0.587 + r.b * 0.114);
-    return { z, z, z };
+std::vector<int> monochrome_with_severity(const std::vector<int>& srgb, double severity) {
+    int z = std::round(srgb[0] * 0.299 + srgb[1] * 0.587 + srgb[2] * 0.114);
+    int r = z * severity + (1.0 - severity) * srgb[0];
+    int g = z * severity + (1.0 - severity) * srgb[1];
+    int b = z * severity + (1.0 - severity) * srgb[2];
+    return { r, g, b };
 }
 
 int main() {
-    initializePowGammaLookup();
+    std::vector<int> inputRGB = { 0, 128, 0 };
+    std::string colorBlindType = "deutan";
+    double severity = 1.0;
 
-    RGB input_rgb = { 0, 128, 0 }; // 输入RGB颜色
-    std::string color_blindness_type = "protan"; // 色盲类型（如：protan，deutan，tritan）
+    std::vector<int> outputRGB = brettel(inputRGB, colorBlindType, severity);
 
-    RGB output_rgb = blindMK(input_rgb, color_blindness_type);
-
-    std::cout << "Output RGB: (" << output_rgb.r << ", " << output_rgb.g << ", " << output_rgb.b << ")" << std::endl;
+    std::cout << "Input RGB: (" << inputRGB[0] << ", " << inputRGB[1] << ", " << inputRGB[2] << ")\n";
+    std::cout << "Output RGB for " << colorBlindType << ": (" << outputRGB[0] << ", " << outputRGB[1] << ", " << outputRGB[2] << ")\n";
 
     return 0;
 }
